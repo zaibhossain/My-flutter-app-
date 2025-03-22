@@ -30,3 +30,27 @@ def get_user_profile(user_id: int):
     if user_id not in user_profiles:
         raise HTTPException(status_code=404, detail="User not found")
     return user_profiles[user_id]
+
+# Get all user profiles
+@app.get("/users/")
+def get_all_users():
+    return {"users": list(user_profiles.values())}
+
+# Delete user profile
+@app.delete("/user/{user_id}")
+async def delete_user_profile(user_id: int):
+    if user_id not in user_profiles:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    del user_profiles[user_id]  # Remove user from memory
+    return {"message": f"User {user_id} deleted successfully"}
+
+# Update user profile (PUT request)
+@app.put("/user/{user_id}")
+async def update_user_profile(user_id: int, user_profile: UserProfile):
+    if user_id not in user_profiles:
+        raise HTTPException(status_code=404, detail="User not found")
+    updated_profile = user_profile.dict()
+    updated_profile["user_id"] = user_id
+    user_profiles[user_id] = updated_profile  # Update the user profile
+    return {"message": "User profile updated", "data": updated_profile}
