@@ -82,6 +82,9 @@ class _UserProfileFormState extends State<UserProfileForm> {
               (user) => user['user_id'] == userId,
             )['gift_preferences'] =
             _giftPreferencesController.text;
+
+        // Reset selected user ID to allow creating new users
+        _selectedUserId = null;
       });
 
       // Clear the input fields after successful update
