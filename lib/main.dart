@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 
 void main() {
   runApp(MyApp());
@@ -10,230 +12,162 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter User Profile',
+      title: 'Image Upload Gallery',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: UserProfileForm(),
+      home: ImageUploadScreen(),
     );
   }
 }
 
-class UserProfileForm extends StatefulWidget {
+class ImageUploadScreen extends StatefulWidget {
   @override
-  _UserProfileFormState createState() => _UserProfileFormState();
+  _ImageUploadScreenState createState() => _ImageUploadScreenState();
 }
 
-class _UserProfileFormState extends State<UserProfileForm> {
-  final _nameController = TextEditingController();
-  final _interestsController = TextEditingController();
-  final _giftPreferencesController = TextEditingController();
-  List<dynamic> _users = []; // List to store user profiles
-  int? _selectedUserId; // To track which user is selected for editing
+class _ImageUploadScreenState extends State<ImageUploadScreen> {
+  File? _image;
+  final _picker = ImagePicker();
+  List<String> _uploadedImages = [];
+  List<Map<String, dynamic>> _analysisResults = [];
 
-  // POST request to create a new user
-  void _submitForm() async {
-    final response = await http.post(
-      Uri.parse('http://10.0.2.2:8000/user/'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'name': _nameController.text,
-        'interests': _interestsController.text,
-        'gift_preferences': _giftPreferencesController.text,
-      }),
-    );
-
-    if (response.statusCode == 200) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('User profile created successfully!')),
-      );
-
-      // Clear the input fields after successful submission
-      _nameController.clear();
-      _interestsController.clear();
-      _giftPreferencesController.clear();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to create profile: ${response.body}')),
-      );
+  Future<void> _pickImage() async {
+    final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      setState(() {
+        _image = File(pickedFile.path);
+      });
     }
   }
 
-  // PUT request to update an existing user
-  void _updateUser(int userId) async {
-    final response = await http.put(
-      Uri.parse('http://10.0.2.2:8000/user/$userId'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'name': _nameController.text,
-        'interests': _interestsController.text,
-        'gift_preferences': _giftPreferencesController.text,
-      }),
+  Future<void> _uploadImage() async {
+    if (_image == null) return;
+
+    var request = http.MultipartRequest(
+      'POST',
+      Uri.parse('http://10.0.2.2:8000/upload/'),
     );
+    request.files.add(await http.MultipartFile.fromPath('image', _image!.path));
+
+    var response = await request.send();
 
     if (response.statusCode == 200) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('User profile updated successfully!')),
-      );
-      setState(() {
-        _users.firstWhere((user) => user['user_id'] == userId)['name'] =
-            _nameController.text;
-        _users.firstWhere((user) => user['user_id'] == userId)['interests'] =
-            _interestsController.text;
-        _users.firstWhere(
-              (user) => user['user_id'] == userId,
-            )['gift_preferences'] =
-            _giftPreferencesController.text;
+      final responseData = await http.Response.fromStream(response);
+      final data = jsonDecode(responseData.body);
 
-        // Reset selected user ID to allow creating new users
-        _selectedUserId = null;
+      setState(() {
+        _analysisResults = List<Map<String, dynamic>>.from(data['results']);
       });
 
-      // Clear the input fields after successful update
-      _nameController.clear();
-      _interestsController.clear();
-      _giftPreferencesController.clear();
-    } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update profile: ${response.body}')),
+        SnackBar(content: Text('Photo uploaded and analyzed successfully!')),
       );
-    }
-  }
-
-  // DELETE request to remove a user
-  void _deleteUser(int userId) async {
-    final response = await http.delete(
-      Uri.parse('http://10.0.2.2:8000/user/$userId'),
-    );
-
-    if (response.statusCode == 200) {
-      setState(() {
-        _users.removeWhere((user) => user['user_id'] == userId);
-      });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('User deleted successfully!')));
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to delete user: ${response.body}')),
-      );
-    }
-  }
-
-  // GET request to fetch all users
-  void _fetchUsers() async {
-    final response = await http.get(Uri.parse('http://10.0.2.2:8000/users/'));
-
-    if (response.statusCode == 200) {
-      List<dynamic> users = jsonDecode(response.body)['users'];
-      setState(() {
-        _users = users; // Update the user list
-      });
-
-      // Show fetched profiles in a scrollable dialog
-      showDialog(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: Text('User Profiles'),
-            content: SingleChildScrollView(
-              child: Container(
-                width: double.maxFinite,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children:
-                      _users.map((user) {
-                        return ListTile(
-                          title: Text(user['name']),
-                          subtitle: Text(
-                            'Interests: ${user['interests']}\nGift Preferences: ${user['gift_preferences']}',
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: Icon(Icons.edit, color: Colors.blue),
-                                onPressed: () {
-                                  // Set the selected user ID and populate fields for editing
-                                  setState(() {
-                                    _selectedUserId = user['user_id'];
-                                    _nameController.text = user['name'];
-                                    _interestsController.text =
-                                        user['interests'];
-                                    _giftPreferencesController.text =
-                                        user['gift_preferences'];
-                                  });
-                                  Navigator.pop(context); // Close dialog
-                                },
-                              ),
-                              IconButton(
-                                icon: Icon(Icons.delete, color: Colors.red),
-                                onPressed: () {
-                                  _deleteUser(user['user_id']); // Delete user
-                                  Navigator.pop(context); // Close dialog
-                                },
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text('Close'),
-              ),
-            ],
-          );
-        },
-      );
+      _fetchImages();
     } else {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Failed to load profiles')));
+      ).showSnackBar(SnackBar(content: Text('Upload failed')));
     }
+  }
+
+  Future<void> _deleteImage(String filename) async {
+    try {
+      final filenameWithoutDir = filename.split('/').last;
+
+      final response = await http.delete(
+        Uri.parse('http://10.0.2.2:8000/delete/$filenameWithoutDir'),
+      );
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Image deleted successfully!')));
+        _fetchImages();
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete image')));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error deleting image: $e')));
+    }
+  }
+
+  Future<void> _fetchImages() async {
+    final response = await http.get(Uri.parse('http://10.0.2.2:8000/images/'));
+    if (response.statusCode == 200) {
+      final List<dynamic> images = jsonDecode(response.body)['images'];
+      setState(() {
+        _uploadedImages = List<String>.from(images);
+      });
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchImages();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('User Profile')),
+      appBar: AppBar(title: Text('Upload & View Images')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // User profile form fields
-            TextField(
-              controller: _nameController,
-              decoration: InputDecoration(labelText: 'Name'),
+            _image == null
+                ? Text('No image selected.')
+                : Image.file(_image!, height: 150),
+            Row(
+              children: [
+                ElevatedButton(
+                  onPressed: _pickImage,
+                  child: Text('Pick Image'),
+                ),
+                SizedBox(width: 10),
+                ElevatedButton(onPressed: _uploadImage, child: Text('Upload')),
+              ],
             ),
-            TextField(
-              controller: _interestsController,
-              decoration: InputDecoration(
-                labelText: 'Interests (comma separated)',
+            Divider(),
+            if (_analysisResults.isNotEmpty)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Analysis Results:'),
+                  ..._analysisResults.map((result) {
+                    return Text(
+                      '${result['label']} - Probability: ${(result['probability'] * 100).toStringAsFixed(2)}%',
+                    );
+                  }).toList(),
+                ],
               ),
+            Divider(),
+            Expanded(
+              child:
+                  _uploadedImages.isEmpty
+                      ? Text('No uploaded images.')
+                      : ListView.builder(
+                        itemCount: _uploadedImages.length,
+                        itemBuilder: (context, index) {
+                          final imageUrl =
+                              'http://10.0.2.2:8000/${_uploadedImages[index]}';
+                          return ExpansionTile(
+                            title: Text(_uploadedImages[index]),
+                            children: [
+                              Image.network(imageUrl),
+                              ElevatedButton(
+                                onPressed:
+                                    () => _deleteImage(_uploadedImages[index]),
+                                child: Text('Delete'),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
             ),
-            TextField(
-              controller: _giftPreferencesController,
-              decoration: InputDecoration(
-                labelText: 'Gift Preferences (comma separated)',
-              ),
-            ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed:
-                  _selectedUserId == null
-                      ? _submitForm
-                      : () {
-                        _updateUser(
-                          _selectedUserId!,
-                        ); // Update existing profile
-                      },
-              child: Text(_selectedUserId == null ? 'Submit' : 'Update'),
-            ),
-            SizedBox(height: 10),
-            ElevatedButton(onPressed: _fetchUsers, child: Text('Fetch Users')),
           ],
         ),
       ),

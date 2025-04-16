@@ -1,56 +1,81 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+import os
+import torch
+import clip
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
+import shutil
+import logging
 
 app = FastAPI()
 
-# User profile data model (user_id removed)
-class UserProfile(BaseModel):
-    name: str
-    interests: str  
-    gift_preferences: str  
+# Allow Flutter to connect (CORS)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# In-memory "database" to store user profiles
-user_profiles = {}
+# Initialize CLIP model
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model, preprocess = clip.load("ViT-B/32", device=device)
 
-# Create user profile (ID is generated automatically)
-@app.post("/user/")
-async def create_user_profile(user_profile: UserProfile):
-    user_id = len(user_profiles) + 1  # Generate a new user_id
+UPLOAD_DIR = "uploaded_images"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
 
-    user_profile_dict = user_profile.dict()
-    user_profile_dict["user_id"] = user_id  # Assign generated ID
+# Define possible labels for the analysis
+possible_labels = [
+    "a birthday cake", "flowers", "shoes", "a toy", "a watch", "apple",
+    "perfume", "jewelry", "sports equipment", "a book", "chocolates"
+]
 
-    user_profiles[user_id] = user_profile_dict  # Store in dictionary
+@app.post("/upload/")
+async def upload_image(image: UploadFile = File(...)):
+    try:
+        file_path = os.path.join(UPLOAD_DIR, image.filename)
+        
+        # Save the uploaded image
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+        
+        # Run AI analysis
+        img = preprocess(Image.open(file_path)).unsqueeze(0).to(device)
+        text = clip.tokenize(possible_labels).to(device)
 
-    return {"message": "User profile created", "data": user_profile_dict}
+        with torch.no_grad():
+            # Perform the CLIP analysis
+            logits_per_image, _ = model(img, text)
+            probs = logits_per_image.softmax(dim=-1).cpu().numpy()
 
-# Get user profile
-@app.get("/user/{user_id}")
-def get_user_profile(user_id: int):
-    if user_id not in user_profiles:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user_profiles[user_id]
+        # Sort and return the top 3 matches
+        top_probs = sorted(zip(possible_labels, probs[0]), key=lambda x: x[1], reverse=True)
+        results = [{"label": label, "probability": float(prob)} for label, prob in top_probs[:3]]
 
-# Get all user profiles
-@app.get("/users/")
-def get_all_users():
-    return {"users": list(user_profiles.values())}
+        return JSONResponse(content={"image": image.filename, "results": results})
+    except Exception as e:
+        logging.error(f"Error during upload or analysis: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": "Failed to process image."})
 
-# Delete user profile
-@app.delete("/user/{user_id}")
-async def delete_user_profile(user_id: int):
-    if user_id not in user_profiles:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    del user_profiles[user_id]  # Remove user from memory
-    return {"message": f"User {user_id} deleted successfully"}
+@app.get("/images/")
+def get_uploaded_images():
+    files = os.listdir(UPLOAD_DIR)
+    return {"images": [f"{UPLOAD_DIR}/{file}" for file in files]}
 
-# Update user profile (PUT request)
-@app.put("/user/{user_id}")
-async def update_user_profile(user_id: int, user_profile: UserProfile):
-    if user_id not in user_profiles:
-        raise HTTPException(status_code=404, detail="User not found")
-    updated_profile = user_profile.dict()
-    updated_profile["user_id"] = user_id
-    user_profiles[user_id] = updated_profile  # Update the user profile
-    return {"message": "User profile updated", "data": updated_profile}
+@app.delete("/delete/{filename}")
+async def delete_image(filename: str):
+    try:
+        file_path = os.path.join(UPLOAD_DIR, filename)
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            logging.info(f"Successfully deleted image {filename}")
+            return JSONResponse(content={"message": f"Image {filename} deleted successfully."})
+        else:
+            logging.error(f"Attempted to delete non-existent image {filename}")
+            return JSONResponse(status_code=404, content={"error": f"Image {filename} not found."})
+    except Exception as e:
+        logging.error(f"Failed to delete image {filename}: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": "Failed to delete image."})
