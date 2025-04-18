@@ -26,11 +26,52 @@ UPLOAD_DIR = "uploaded_images"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-# Define possible labels for the analysis
+# Use specific personality-driven labels
 possible_labels = [
-    "a birthday cake", "flowers", "shoes", "a toy", "a watch", "apple",
-    "perfume", "jewelry", "sports equipment", "a book", "chocolates"
+    "sports enthusiast",
+    "fitness fanatic",
+    "outdoor adventurer",
+    "hiker",
+    "cyclist",
+    "runner",
+    "yoga practitioner",
+    "gym-goer",
+    "creative thinker",
+    "artist",
+    "photographer",
+    "musician",
+    "music lover",
+    "book lover",
+    "writer",
+    "tech-savvy",
+    "gamer",
+    "programmer",
+    "collector",
+    "fashion-forward",
+    "foodie",
+    "chef",
+    "traveler",
+    "nature lover",
+    "homebody",
+    "movie buff",
+    "gardener",
+    "DIY enthusiast",
+    "board game player",
+    "car enthusiast",
+    "pet lover",
+    "social butterfly",
+    "party planner",
+    "volunteer",
+    "teacher",
+    "researcher",
+    "science enthusiast",
+    "history buff",
+    "language learner",
+    "puzzle solver"
 ]
+
+# Precompute tokenized labels once during server startup
+tokenized_labels = clip.tokenize(possible_labels).to(device)
 
 @app.post("/upload/")
 async def upload_image(image: UploadFile = File(...)):
@@ -43,11 +84,10 @@ async def upload_image(image: UploadFile = File(...)):
         
         # Run AI analysis
         img = preprocess(Image.open(file_path)).unsqueeze(0).to(device)
-        text = clip.tokenize(possible_labels).to(device)
 
         with torch.no_grad():
-            # Perform the CLIP analysis
-            logits_per_image, _ = model(img, text)
+            # Perform the CLIP analysis using precomputed tokenized labels
+            logits_per_image, _ = model(img, tokenized_labels)
             probs = logits_per_image.softmax(dim=-1).cpu().numpy()
 
         # Sort and return the top 3 matches
@@ -58,24 +98,3 @@ async def upload_image(image: UploadFile = File(...)):
     except Exception as e:
         logging.error(f"Error during upload or analysis: {str(e)}")
         return JSONResponse(status_code=500, content={"error": "Failed to process image."})
-
-@app.get("/images/")
-def get_uploaded_images():
-    files = os.listdir(UPLOAD_DIR)
-    return {"images": [f"{UPLOAD_DIR}/{file}" for file in files]}
-
-@app.delete("/delete/{filename}")
-async def delete_image(filename: str):
-    try:
-        file_path = os.path.join(UPLOAD_DIR, filename)
-
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            logging.info(f"Successfully deleted image {filename}")
-            return JSONResponse(content={"message": f"Image {filename} deleted successfully."})
-        else:
-            logging.error(f"Attempted to delete non-existent image {filename}")
-            return JSONResponse(status_code=404, content={"error": f"Image {filename} not found."})
-    except Exception as e:
-        logging.error(f"Failed to delete image {filename}: {str(e)}")
-        return JSONResponse(status_code=500, content={"error": "Failed to delete image."})
